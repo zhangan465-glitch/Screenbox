@@ -18,6 +18,7 @@ public static class ServiceHelpers
         services.AddTransient<CompositeTrackPickerViewModel>();
         services.AddTransient<SeekBarViewModel>();
         services.AddTransient<VideosPageViewModel>();
+        services.AddTransient<VideoFolderGroupsPageViewModel>();
         services.AddTransient<NetworkPageViewModel>();
         services.AddTransient<FolderViewPageViewModel>();
         services.AddTransient<FolderListViewPageViewModel>();
@@ -28,6 +29,7 @@ public static class ServiceHelpers
         services.AddTransient<PlayQueuePageViewModel>();
         services.AddTransient<SettingsPageViewModel>();
         services.AddTransient<PlayQueuePanelViewModel>();
+        services.AddSingleton<PlayerSidebarViewModel>();
         services.AddTransient<AlbumDetailsPageViewModel>();
         services.AddTransient<ArtistDetailsPageViewModel>();
         services.AddTransient<PlaylistDetailsPageViewModel>();

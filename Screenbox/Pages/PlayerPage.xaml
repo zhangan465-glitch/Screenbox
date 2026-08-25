@@ -1,4 +1,4 @@
-<Page
+﻿<Page
     x:Class="Screenbox.Pages.PlayerPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -92,6 +92,7 @@
         PointerMoved="{x:Bind ViewModel.OnPointerMoved}"
         PreviewKeyDown="LayoutRoot_OnPreviewKeyDown"
         PreviewKeyUp="LayoutRoot_OnPreviewKeyUp"
+        SizeChanged="LayoutRoot_OnSizeChanged"
         Translation="0,0,32">
         <Grid.Transitions>
             <TransitionCollection>
@@ -214,6 +215,31 @@
                     TextWrapping="NoWrap"
                     Visibility="{x:Bind ViewModel.Media.AltCaption, Mode=OneWay, Converter={StaticResource StringVisibilityConverter}, FallbackValue=Collapsed}" />
             </StackPanel>
+        </Button>
+
+        <Button
+            x:Name="MiniPlayerPlayQueueButton"
+            Grid.Row="0"
+            Grid.Column="1"
+            Width="44"
+            Height="44"
+            Margin="0,0,0,0"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            AllowDrop="True"
+            AutomationProperties.Name="{x:Bind strings:Resources.PlayQueue}"
+            Canvas.ZIndex="5"
+            Click="PlayQueueButton_OnClick"
+            DragEnter="PlayQueueButton_OnDragEnter"
+            DragLeave="PlayQueueButton_OnDragLeave"
+            Style="{StaticResource SubtleButtonStyle}"
+            ToolTipService.ToolTip="{x:Bind strings:Resources.PlayQueue}"
+            Visibility="Collapsed">
+            <FontIcon
+                x:Name="MiniPlayerPlayQueueButtonIcon"
+                FontFamily="{StaticResource ScreenboxSymbolThemeFontFamily}"
+                FontSize="20"
+                Glyph="{StaticResource PlaylistMusicGlyph}" />
         </Button>
 
         <Grid
@@ -516,6 +542,7 @@
                     AccessKey="{x:Bind strings:KeyboardResources.PlayerQueueKey}"
                     AllowDrop="True"
                     AutomationProperties.Name="{x:Bind strings:Resources.PlayQueue}"
+                    Click="PlayQueueButton_OnClick"
                     DragEnter="PlayQueueButton_OnDragEnter"
                     DragLeave="PlayQueueButton_OnDragLeave"
                     Style="{StaticResource SubtleButtonStyle}"
@@ -528,6 +555,7 @@
                     <Button.Flyout>
                         <Flyout
                             x:Name="PlayQueueFlyout"
+                            Closed="PlayQueueFlyout_OnClosed"
                             Opened="PlayQueueFlyout_OnOpened"
                             Opening="PlayQueueFlyout_OnOpening"
                             Placement="BottomEdgeAlignedLeft">
@@ -540,13 +568,13 @@
                                     <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
                                 </Style>
                             </Flyout.FlyoutPresenterStyle>
-                            <controls:PlayQueueControl
-                                x:Name="PlayQueue"
+                            <controls:PlayerSidebar
+                                x:Name="PlayQueueFlyoutContent"
                                 Width="432"
-                                MinHeight="200"
+                                MinHeight="160"
                                 MaxHeight="500"
-                                Padding="12,0"
                                 x:Load="False"
+                                CloseRequested="PlayQueueFlyoutContent_OnCloseRequested"
                                 IsAccessKeyScope="True"
                                 IsFlyout="True" />
                         </Flyout>
@@ -611,6 +639,26 @@
                 </Button>
             </sbuc:TitleBar.Footer>
         </sbuc:TitleBar>
+
+        <controls:PlayerSidebar
+            x:Name="PlayQueueSidebar"
+            Grid.Row="1"
+            Grid.RowSpan="2"
+            Grid.ColumnSpan="2"
+            Width="360"
+            MinWidth="300"
+            MaxWidth="440"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Stretch"
+            x:Load="False"
+            CloseRequested="PlayQueueSidebar_OnCloseRequested"
+            Visibility="Collapsed">
+            <controls:PlayerSidebar.Transitions>
+                <TransitionCollection>
+                    <PaneThemeTransition Edge="Left" />
+                </TransitionCollection>
+            </controls:PlayerSidebar.Transitions>
+        </controls:PlayerSidebar>
 
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="ControlsVisibilityStates" CurrentStateChanged="ControlsVisibilityStates_OnCurrentStateChanged">
@@ -827,7 +875,7 @@
                         <Setter Target="PlayerTitleBar.MinHeight" Value="32" />
                         <Setter Target="PlayerTitleBar.Icon" Value="{ui:BitmapIcon Source=ms-appx:///Assets/Square44x44Logo.png, ShowAsMonochrome=False}" />
                         <Setter Target="BackButton.Visibility" Value="Collapsed" />
-                        <Setter Target="PlayQueueButton.Visibility" Value="Collapsed" />
+                        <Setter Target="PlayQueueButton.Margin" Value="4,0,0,0" />
                         <Setter Target="TitleBarTextStackPanel.Margin" Value="0,8,0,8" />
                         <Setter Target="TitleBarTextStackPanel.Orientation" Value="Horizontal" />
                         <Setter Target="TitleBarTextStackPanel.Spacing" Value="8" />
@@ -870,6 +918,8 @@
                         <Setter Target="SecondColumn.Width" Value="*" />
                         <Setter Target="PlayerTitleBar.Visibility" Value="Collapsed" />
                         <Setter Target="MiniPlayerTitleButton.Visibility" Value="Visible" />
+                        <Setter Target="MiniPlayerTitleButton.Margin" Value="16,0,54,0" />
+                        <Setter Target="MiniPlayerPlayQueueButton.Visibility" Value="Visible" />
                         <Setter Target="BackgroundElement.Opacity" Value="0" />
                         <Setter Target="VideoView.CornerRadius" Value="{StaticResource ControlCornerRadius}" />
                         <Setter Target="VideoView.IsEnabled" Value="False" />
@@ -1006,6 +1056,9 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="PlayQueueButtonIcon.Glyph" Value="{StaticResource PlaylistMusicMirroredGlyph}" />
+                        <Setter Target="MiniPlayerPlayQueueButton.HorizontalAlignment" Value="Left" />
+                        <Setter Target="MiniPlayerPlayQueueButtonIcon.Glyph" Value="{StaticResource PlaylistMusicMirroredGlyph}" />
+                        <Setter Target="MiniPlayerTitleButton.Margin" Value="54,0,16,0" />
                         <Setter Target="PlayQueueFlyout.Placement" Value="BottomEdgeAlignedRight" />
                         <Setter Target="LivelyOptionsButtonIcon.Glyph" Value="{StaticResource MusicVisualizerMirroredGlyph}" />
                     </VisualState.Setters>

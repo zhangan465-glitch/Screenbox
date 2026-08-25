@@ -29,16 +29,22 @@ namespace Screenbox.Pages;
 /// </summary>
 public sealed partial class PlayerPage : Page
 {
+    private const double PlayQueueSidebarMinimumWindowWidth = 720;
+
     internal PlayerPageViewModel ViewModel => (PlayerPageViewModel)DataContext;
 
     private readonly DispatcherQueueTimer _delayFlyoutOpenTimer;
     private CancellationTokenSource? _animationCancellationTokenSource;
+    private FrameworkElement? _playQueueFlyoutAnchor;
     private bool _startup;
 
     public PlayerPage()
     {
         this.InitializeComponent();
         DataContext = Ioc.Default.GetRequiredService<PlayerPageViewModel>();
+        FlyoutBase queueFlyout = PlayQueueButton.Flyout;
+        PlayQueueButton.Flyout = null;
+        FlyoutBase.SetAttachedFlyout(PlayQueueButton, queueFlyout);
         ViewModel.GetVolumeChangeStatusMessage = Strings.Resources.VolumeChangeStatusMessage;
         _delayFlyoutOpenTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
 
@@ -79,10 +85,9 @@ public sealed partial class PlayerPage : Page
 
         switch (e.Key)
         {
-            case VirtualKey.GamepadY when ViewModel.ViewMode != WindowViewMode.Compact:
-                ViewModel.ControlsHidden = false;
-                PlayQueueFlyout.ShowAt(PlayQueueButton,
-                    new FlyoutShowOptions { Placement = GlobalizationHelper.MirrorWhenRightToLeft(FlyoutPlacementMode.BottomEdgeAlignedLeft) });
+            case VirtualKey.GamepadY:
+                TogglePlayQueuePresentation(GetPlayQueueAnchor());
+                e.Handled = true;
                 break;
             case VirtualKey.GamepadMenu:
                 VideoView.ContextFlyout.ShowAt(PlayerControls,
@@ -179,6 +184,13 @@ public sealed partial class PlayerPage : Page
         switch (e.PropertyName)
         {
             case nameof(PlayerPageViewModel.ControlsHidden):
+                if (ViewModel.ControlsHidden &&
+                    (PlayQueueSidebar is { Visibility: Visibility.Visible } || PlayQueueFlyout.IsOpen))
+                {
+                    ViewModel.ControlsHidden = false;
+                    break;
+                }
+
                 VisualStateManager.GoToState(this, ViewModel.ControlsHidden ? "ControlsHidden" : "ControlsVisible", true);
                 if (!ViewModel.ControlsHidden)
                 {
@@ -205,6 +217,7 @@ public sealed partial class PlayerPage : Page
                 }
 
                 UpdateContentState();
+                UpdatePlayQueuePresentationAvailability();
                 break;
             case nameof(PlayerPageViewModel.AudioOnly):
                 UpdateContentState();
@@ -233,6 +246,7 @@ public sealed partial class PlayerPage : Page
                 UpdateRootTheme();
                 UpdatePreviewType();
                 UpdateMiniPlayerMargin();
+                UpdatePlayQueuePresentationAvailability();
                 break;
             case nameof(PlayerPageViewModel.NavigationViewDisplayMode) when ViewModel.ViewMode == WindowViewMode.Default:
                 UpdateMiniPlayerMargin();
@@ -270,6 +284,8 @@ public sealed partial class PlayerPage : Page
                 {
                     PlayQueueFlyout.Hide();
                 }
+
+                HidePlayQueueSidebar(false);
 
                 ViewModel.ShouldClosePlayQueueFlyout = false;
                 break;
@@ -382,15 +398,149 @@ public sealed partial class PlayerPage : Page
 
     private void PlayQueueFlyout_OnOpening(object sender, object e)
     {
-        // Delay load PlayQueueControl until flyout is opening
+        // Delay load the playlist surface until the flyout is opening
         // Save loading time when launching from file
-        FindName(nameof(PlayQueue));
+        FindName(nameof(PlayQueueFlyoutContent));
+        if (PlayQueueFlyoutContent is not null)
+        {
+            PlayQueueFlyoutContent.Width = Math.Clamp(LayoutRoot.ActualWidth - 16, 160, 432);
+        }
     }
 
-    private async void PlayQueueFlyout_OnOpened(object sender, object e)
+    private void PlayQueueButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if (PlayQueue == null) return;
-        await PlayQueue.SmoothScrollActiveItemIntoViewAsync();
+        TogglePlayQueuePresentation(sender as FrameworkElement ?? GetPlayQueueAnchor());
+    }
+
+    private void TogglePlayQueuePresentation(FrameworkElement anchor)
+    {
+        ViewModel.ControlsHidden = false;
+        if (CanUsePlayQueueSidebar())
+        {
+            if (PlayQueueSidebar is { Visibility: Visibility.Visible })
+            {
+                HidePlayQueueSidebar();
+            }
+            else
+            {
+                ShowPlayQueueSidebar();
+            }
+
+            return;
+        }
+
+        HidePlayQueueSidebar(false);
+        if (PlayQueueFlyout.IsOpen)
+        {
+            PlayQueueFlyout.Hide();
+            return;
+        }
+
+        ShowPlayQueueFlyout(anchor);
+    }
+
+    private void ShowPlayQueueFlyout(FrameworkElement anchor)
+    {
+        _playQueueFlyoutAnchor = anchor;
+        PlayQueueFlyout.ShowAt(anchor,
+            new FlyoutShowOptions
+            {
+                Placement = GlobalizationHelper.MirrorWhenRightToLeft(FlyoutPlacementMode.BottomEdgeAlignedLeft)
+            });
+    }
+
+    private FrameworkElement GetPlayQueueAnchor()
+    {
+        return MiniPlayerPlayQueueButton.Visibility == Visibility.Visible
+            ? MiniPlayerPlayQueueButton
+            : PlayQueueButton;
+    }
+
+    private bool CanUsePlayQueueSidebar()
+    {
+        return ViewModel.PlayerVisibility == PlayerVisibilityState.Visible &&
+               ViewModel.ViewMode != WindowViewMode.Compact &&
+               LayoutRoot.ActualWidth >= PlayQueueSidebarMinimumWindowWidth;
+    }
+
+    private void ShowPlayQueueSidebar()
+    {
+        PlayQueueFlyout.Hide();
+        FindName(nameof(PlayQueueSidebar));
+        if (PlayQueueSidebar is null)
+        {
+            return;
+        }
+
+        PlayQueueSidebar.Width = Math.Clamp(LayoutRoot.ActualWidth * 0.36, 300, 440);
+        PlayQueueSidebar.HorizontalAlignment = GlobalizationHelper.IsRightToLeftLanguage
+            ? HorizontalAlignment.Right
+            : HorizontalAlignment.Left;
+        if (PlayQueueSidebar.Transitions.Count > 0 && PlayQueueSidebar.Transitions[0] is PaneThemeTransition transition)
+        {
+            transition.Edge = GlobalizationHelper.IsRightToLeftLanguage
+                ? EdgeTransitionLocation.Right
+                : EdgeTransitionLocation.Left;
+        }
+        PlayQueueSidebar.Visibility = Visibility.Visible;
+        PlayQueueSidebar.PrepareForOpen();
+    }
+
+    private void HidePlayQueueSidebar(bool restoreFocus = true)
+    {
+        if (PlayQueueSidebar is not { Visibility: Visibility.Visible })
+        {
+            return;
+        }
+
+        PlayQueueSidebar.Visibility = Visibility.Collapsed;
+        if (restoreFocus && PlayQueueButton.Visibility == Visibility.Visible)
+        {
+            PlayQueueButton.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void UpdatePlayQueuePresentationAvailability()
+    {
+        if (!CanUsePlayQueueSidebar())
+        {
+            HidePlayQueueSidebar(false);
+        }
+    }
+
+    private void LayoutRoot_OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdatePlayQueuePresentationAvailability();
+        if (PlayQueueSidebar is { Visibility: Visibility.Visible })
+        {
+            PlayQueueSidebar.Width = Math.Clamp(e.NewSize.Width * 0.36, 300, 440);
+        }
+    }
+
+    private void PlayQueueSidebar_OnCloseRequested(object? sender, EventArgs e)
+    {
+        HidePlayQueueSidebar();
+    }
+
+    private void PlayQueueFlyout_OnOpened(object sender, object e)
+    {
+        if (PlayQueueFlyoutContent is null) return;
+        PlayQueueFlyoutContent.PrepareForOpen();
+    }
+
+    private void PlayQueueFlyoutContent_OnCloseRequested(object? sender, EventArgs e)
+    {
+        PlayQueueFlyout.Hide();
+    }
+
+    private void PlayQueueFlyout_OnClosed(object sender, object e)
+    {
+        if (_playQueueFlyoutAnchor is Control { Visibility: Visibility.Visible } anchor)
+        {
+            anchor.Focus(FocusState.Programmatic);
+        }
+
+        _playQueueFlyoutAnchor = null;
     }
 
     private void OnActualThemeChanged(FrameworkElement sender, object args)
@@ -407,7 +557,18 @@ public sealed partial class PlayerPage : Page
     private void PlayQueueButton_OnDragEnter(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        _delayFlyoutOpenTimer.Debounce(() => PlayQueueFlyout.ShowAt(PlayQueueButton), TimeSpan.FromMilliseconds(500));
+        FrameworkElement anchor = sender as FrameworkElement ?? GetPlayQueueAnchor();
+        _delayFlyoutOpenTimer.Debounce(() =>
+        {
+            if (CanUsePlayQueueSidebar())
+            {
+                ShowPlayQueueSidebar();
+            }
+            else
+            {
+                ShowPlayQueueFlyout(anchor);
+            }
+        }, TimeSpan.FromMilliseconds(500));
     }
 
     private void PlayQueueButton_OnDragLeave(object sender, DragEventArgs e)
@@ -530,6 +691,13 @@ public sealed partial class PlayerPage : Page
 
     private void EscapeKeyboardAccelerator_OnInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
+        if (PlayQueueSidebar is { Visibility: Visibility.Visible })
+        {
+            HidePlayQueueSidebar();
+            args.Handled = true;
+            return;
+        }
+
         switch (ViewModel.ViewMode)
         {
             case WindowViewMode.Compact:

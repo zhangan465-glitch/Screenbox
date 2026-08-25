@@ -39,7 +39,7 @@ public sealed partial class VideosPage : Page, IContentFrame
 
         _pages = new Dictionary<string, Type>
         {
-            { "folders", typeof(FolderViewPage) },
+            { "folders", typeof(VideoFolderGroupsPage) },
             { "all", typeof(AllVideosPage) }
         };
     }
@@ -67,6 +67,10 @@ public sealed partial class VideosPage : Page, IContentFrame
         if (ContentFrame.Content is FolderViewPage page)
         {
             page.ViewModel.OnNavigatedFrom();
+        }
+        else if (ContentFrame.Content is VideoFolderGroupsPage groupsPage)
+        {
+            groupsPage.ViewModel.OnNavigatedFrom();
         }
     }
 
@@ -107,6 +111,9 @@ public sealed partial class VideosPage : Page, IContentFrame
         if (e.SourcePageType != null)
         {
             UpdateSelectedNavItem(e.SourcePageType);
+            BreadcrumbBar.Visibility = e.SourcePageType == typeof(FolderViewPage)
+                ? Windows.UI.Xaml.Visibility.Visible
+                : Windows.UI.Xaml.Visibility.Collapsed;
         }
 
         ViewModel.OnContentFrameNavigated(sender, e);
@@ -114,11 +121,13 @@ public sealed partial class VideosPage : Page, IContentFrame
 
     private void UpdateSelectedNavItem(Type sourcePageType)
     {
-        KeyValuePair<string, Type> item = _pages.FirstOrDefault(p => p.Value == sourcePageType);
+        string itemKey = sourcePageType == typeof(FolderViewPage)
+            ? "folders"
+            : _pages.FirstOrDefault(p => p.Value == sourcePageType).Key;
 
         Microsoft.UI.Xaml.Controls.NavigationViewItem? selectedItem = LibraryNavView.MenuItems
             .OfType<Microsoft.UI.Xaml.Controls.NavigationViewItem>()
-            .FirstOrDefault(n => n.Tag.Equals(item.Key));
+            .FirstOrDefault(n => n.Tag.Equals(itemKey));
 
         LibraryNavView.SelectedItem = selectedItem;
     }

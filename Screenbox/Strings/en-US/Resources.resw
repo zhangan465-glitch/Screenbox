@@ -271,6 +271,9 @@
   <data name="EmptyFolder" xml:space="preserve">
     <value>This folder is empty</value>
   </data>
+  <data name="FolderUnavailable" xml:space="preserve">
+    <value>Folder unavailable</value>
+  </data>
   <data name="ItemsCount_One" xml:space="preserve">
     <value>{0} item</value>
     <comment>#Format[Plural]</comment>
@@ -1094,6 +1097,15 @@
   <data name="Playlists" xml:space="preserve">
     <value>Playlists</value>
   </data>
+  <data name="CurrentPlayQueue" xml:space="preserve">
+    <value>Current queue</value>
+  </data>
+  <data name="AllPlaylists" xml:space="preserve">
+    <value>All playlists</value>
+  </data>
+  <data name="PlayPlaylist" xml:space="preserve">
+    <value>Play this playlist</value>
+  </data>
   <data name="Delete" xml:space="preserve">
     <value>Delete</value>
   </data>
@@ -1160,4 +1172,3 @@
     <value>Change</value>
   </data>
 </root>
-

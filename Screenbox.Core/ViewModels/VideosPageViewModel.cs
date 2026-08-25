@@ -114,6 +114,7 @@ public sealed partial class VideosPageViewModel : ObservableRecipient,
         try
         {
             await _libraryContext.VideosStorageLibrary?.RequestAddFolderAsync();
+            Messenger.Send(new RefreshFolderMessage());
         }
         catch (Exception e)
         {
