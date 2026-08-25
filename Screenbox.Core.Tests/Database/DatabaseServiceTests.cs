@@ -38,6 +38,78 @@ public sealed class DatabaseServiceTests
     }
 
     [Test]
+    public async Task InitializeAsync_MigratesLegacyPlaylistTablesWithoutLosingDurableData()
+    {
+        using var fixture = new TestDirectoryFixture();
+        string dbPath = Path.Combine(fixture.DirectoryPath, "screenbox.db");
+
+        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE playlists (
+                    id TEXT PRIMARY KEY,
+                    display_name TEXT
+                );
+                CREATE TABLE playlist_items (
+                    playlist_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    sort_order INTEGER
+                );
+                INSERT INTO playlists (id, display_name) VALUES ('legacy-list', 'Legacy favorites');
+                INSERT INTO playlist_items (playlist_id, path, sort_order)
+                VALUES ('legacy-list', 'C:\Media\second.mp4', 1),
+                       ('legacy-list', 'C:\Media\first.mp4', 0);
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var dbService = new DatabaseService(NullLogger<DatabaseService>.Instance)
+        {
+            DbFolderPath = fixture.DirectoryPath,
+        };
+
+        await dbService.InitializeAsync();
+
+        PlaylistRecordDto? playlist = await dbService.LoadPlaylistAsync("legacy-list");
+        await Assert.That(playlist).IsNotNull();
+        await Assert.That(playlist.DisplayName).IsEqualTo("Legacy favorites");
+        await Assert.That(playlist.Items.Count).IsEqualTo(2);
+        await Assert.That(playlist.Items[0].Path).IsEqualTo(@"C:\Media\first.mp4");
+        await Assert.That(playlist.Items[1].Path).IsEqualTo(@"C:\Media\second.mp4");
+    }
+
+    [Test]
+    public async Task InitializeAsync_WhenDatabaseIsCorrupt_PreservesRecoveryCopyBeforeRecreating()
+    {
+        using var fixture = new TestDirectoryFixture();
+        string dbPath = Path.Combine(fixture.DirectoryPath, "screenbox.db");
+        byte[] corruptContent = [0x53, 0x43, 0x52, 0x45, 0x45, 0x4E, 0x42, 0x4F, 0x58];
+        await File.WriteAllBytesAsync(dbPath, corruptContent);
+
+        var dbService = new DatabaseService(NullLogger<DatabaseService>.Instance)
+        {
+            DbFolderPath = fixture.DirectoryPath,
+        };
+
+        await dbService.InitializeAsync();
+
+        string[] recoveryFiles = Directory.GetFiles(fixture.DirectoryPath, "screenbox.db.recovery-*")
+            .Where(path => !path.EndsWith("-shm", StringComparison.Ordinal) && !path.EndsWith("-wal", StringComparison.Ordinal))
+            .ToArray();
+        await Assert.That(recoveryFiles).HasSingleItem();
+        byte[] recoveredContent = await File.ReadAllBytesAsync(recoveryFiles[0]);
+        await Assert.That(recoveredContent.SequenceEqual(corruptContent)).IsTrue();
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA integrity_check;";
+        await Assert.That(command.ExecuteScalar()).IsEqualTo("ok");
+    }
+
+    [Test]
     public async Task SaveMusicCacheAsync_And_LoadLibraryCacheAsync_PersistsAndRetrievesMusicRecords()
     {
         using var fixture = new TestDirectoryFixture();

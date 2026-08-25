@@ -42,8 +42,8 @@ public sealed partial class DatabaseService
         }
         catch (Exception ex) when (ex is SqliteException or IOException)
         {
-            _logger.LogError(ex, "Failed to initialize the database schema. Recreating the database file.");
-            RecreateDatabaseFile(dbPath, connectionString);
+            _logger.LogError(ex, "Failed to initialize the database schema. Preserving a recovery copy before recreating the database file.");
+            RecreateDatabaseFileWithRecoveryCopy(dbPath, connectionString);
         }
     }
 
@@ -63,8 +63,7 @@ public sealed partial class DatabaseService
             "artist", "album", "album_artist", "composers", "genre", "track_number", "bitrate",
             "subtitle", "producers", "writers", "width", "height", "video_bitrate");
         EnsureReplaceableTable(connection, "playback_progress", CreatePlaybackProgressSql, "location", "position_ticks");
-        EnsurePlaylistsTable(connection);
-        EnsurePlaylistItemsTable(connection);
+        EnsureDurablePlaylistTables(connection);
         migrationComplete = await TryImportLegacyPlaylistsAsync(connection);
         transaction.Commit();
         ExecuteNonQuery(connection, "PRAGMA foreign_keys=ON;");
@@ -75,10 +74,16 @@ public sealed partial class DatabaseService
         }
     }
 
-    private void RecreateDatabaseFile(string dbPath, string connectionString)
+    private void RecreateDatabaseFileWithRecoveryCopy(string dbPath, string connectionString)
     {
         _connectionString = null;
-        TryDeleteDatabase(dbPath);
+        using (var pooledConnection = new SqliteConnection(connectionString))
+        {
+            SqliteConnection.ClearPool(pooledConnection);
+        }
+
+        PreserveDatabaseRecoveryCopy(dbPath);
+        DeleteDatabaseFiles(dbPath);
         _connectionString = connectionString;
 
         using var connection = new SqliteConnection(_connectionString);
@@ -94,6 +99,24 @@ public sealed partial class DatabaseService
         ExecuteNonQuery(connection, CreatePlaylistItemsSql);
         transaction.Commit();
         ExecuteNonQuery(connection, "PRAGMA foreign_keys=ON;");
+    }
+
+    private static void PreserveDatabaseRecoveryCopy(string dbPath)
+    {
+        if (!File.Exists(dbPath))
+        {
+            return;
+        }
+
+        string recoveryBasePath = $"{dbPath}.recovery-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+        foreach (string suffix in new[] { string.Empty, "-shm", "-wal" })
+        {
+            string sourcePath = dbPath + suffix;
+            if (File.Exists(sourcePath))
+            {
+                File.Copy(sourcePath, recoveryBasePath + suffix, overwrite: false);
+            }
+        }
     }
 
     private static void EnsureReplaceableTable(SqliteConnection connection, string tableName, string createSql, params string[] expectedColumns)
@@ -112,42 +135,75 @@ public sealed partial class DatabaseService
         }
     }
 
-    private static void EnsurePlaylistsTable(SqliteConnection connection)
+    private static void EnsureDurablePlaylistTables(SqliteConnection connection)
     {
-        HashSet<string> actualColumns = ReadTableColumns(connection, "playlists");
-        string[] expectedColumns = ["id", "display_name", "last_updated"];
-        if (actualColumns.Count is 0)
+        HashSet<string> playlistColumns = ReadTableColumns(connection, "playlists");
+        HashSet<string> itemColumns = ReadTableColumns(connection, "playlist_items");
+        string[] requiredPlaylistColumns = ["id", "display_name", "last_updated"];
+        string[] requiredItemColumns = ["id", "playlist_id", "path", "sort_order"];
+
+        bool playlistsValid = playlistColumns.IsSupersetOf(requiredPlaylistColumns);
+        bool itemsValid = itemColumns.IsSupersetOf(requiredItemColumns);
+        if (playlistsValid && itemsValid)
         {
-            ExecuteNonQuery(connection, CreatePlaylistsSql);
             return;
         }
 
-        if (!HasSchemaDrift(actualColumns, expectedColumns))
+        if (itemColumns.Count > 0)
         {
-            return;
+            ExecuteNonQuery(connection, "ALTER TABLE playlist_items RENAME TO playlist_items_recovery;");
         }
 
-        ExecuteNonQuery(connection, "DROP TABLE playlists;");
+        if (playlistColumns.Count > 0)
+        {
+            ExecuteNonQuery(connection, "ALTER TABLE playlists RENAME TO playlists_recovery;");
+        }
+
         ExecuteNonQuery(connection, CreatePlaylistsSql);
-    }
-
-    private static void EnsurePlaylistItemsTable(SqliteConnection connection)
-    {
-        HashSet<string> actualColumns = ReadTableColumns(connection, "playlist_items");
-        string[] expectedColumns = ["id", "playlist_id", "path", "sort_order"];
-        if (actualColumns.Count is 0)
-        {
-            ExecuteNonQuery(connection, CreatePlaylistItemsSql);
-            return;
-        }
-
-        if (!HasSchemaDrift(actualColumns, expectedColumns))
-        {
-            return;
-        }
-
-        ExecuteNonQuery(connection, "DROP TABLE playlist_items;");
         ExecuteNonQuery(connection, CreatePlaylistItemsSql);
+
+        if (playlistColumns.Contains("id"))
+        {
+            string displayNameExpression = playlistColumns.Contains("display_name")
+                ? "COALESCE(NULLIF(CAST(display_name AS TEXT), ''), CAST(id AS TEXT))"
+                : "CAST(id AS TEXT)";
+            string lastUpdatedExpression = playlistColumns.Contains("last_updated")
+                ? "COALESCE(CAST(last_updated AS INTEGER), 0)"
+                : "0";
+
+            ExecuteNonQuery(connection, $"""
+                INSERT OR IGNORE INTO playlists (id, display_name, last_updated)
+                SELECT CAST(id AS TEXT), {displayNameExpression}, {lastUpdatedExpression}
+                FROM playlists_recovery
+                WHERE id IS NOT NULL;
+                """);
+        }
+
+        if (itemColumns.Contains("playlist_id") && itemColumns.Contains("path"))
+        {
+            string sortOrderExpression = itemColumns.Contains("sort_order")
+                ? "COALESCE(CAST(source.sort_order AS INTEGER), source.rowid)"
+                : "source.rowid";
+
+            ExecuteNonQuery(connection, $"""
+                INSERT INTO playlist_items (playlist_id, path, sort_order)
+                SELECT CAST(source.playlist_id AS TEXT), CAST(source.path AS TEXT), {sortOrderExpression}
+                FROM playlist_items_recovery AS source
+                INNER JOIN playlists AS target ON target.id = CAST(source.playlist_id AS TEXT)
+                WHERE source.playlist_id IS NOT NULL AND source.path IS NOT NULL
+                ORDER BY {sortOrderExpression};
+                """);
+        }
+
+        if (itemColumns.Count > 0)
+        {
+            ExecuteNonQuery(connection, "DROP TABLE playlist_items_recovery;");
+        }
+
+        if (playlistColumns.Count > 0)
+        {
+            ExecuteNonQuery(connection, "DROP TABLE playlists_recovery;");
+        }
     }
 
     private async Task<bool> TryImportLegacyPlaylistsAsync(SqliteConnection connection)
@@ -310,20 +366,13 @@ public sealed partial class DatabaseService
         cmd.ExecuteNonQuery();
     }
 
-    private void TryDeleteDatabase(string dbPath)
+    private static void DeleteDatabaseFiles(string dbPath)
     {
         foreach (string file in new[] { dbPath, dbPath + "-shm", dbPath + "-wal" })
         {
-            try
+            if (File.Exists(file))
             {
-                if (File.Exists(file))
-                {
-                    File.Delete(file);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete database file '{FilePath}'.", file);
+                File.Delete(file);
             }
         }
     }
